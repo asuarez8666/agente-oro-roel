@@ -143,6 +143,7 @@ st.markdown("""
 .tag-down { background:rgba(224,92,75,.15); color:#E05C4B; border:1px solid rgba(224,92,75,.3); padding:2px 8px; border-radius:4px; font-size:11px; font-family:'DM Mono',monospace; }
 .tag-neutral { background:rgba(201,150,58,.15); color:#C9963A; border:1px solid rgba(201,150,58,.3); padding:2px 8px; border-radius:4px; font-size:11px; font-family:'DM Mono',monospace; }
 
+#MainMenu {visibility:hidden;} footer {visibility:hidden;} header {visibility:hidden;} [data-testid="stToolbar"]{display:none;} [data-testid="stDecoration"]{display:none;}
 [data-testid="stChatInput"] textarea { background:#2A2720 !important; color:#F5EDD8 !important; border:1px solid rgba(201,150,58,0.3) !important; border-radius:14px !important; font-family:'Sora',sans-serif !important; }
 [data-testid="stChatInput"] textarea:focus { border-color:#C9963A !important; }
 button[kind="secondary"] { background:transparent !important; border:1px solid rgba(201,150,58,0.3) !important; color:#A8997A !important; border-radius:20px !important; font-size:12px !important; }
@@ -292,7 +293,7 @@ if user_input:
                 max_tokens=1000,
                 system=system,
                 tools=[{"type": "web_search_20250305", "name": "web_search"}],
-                betas=["web-search-2025-03-05"],
+                extra_headers={"anthropic-beta": "web-search-2025-03-05"},
                 messages=api_messages
             )
 
