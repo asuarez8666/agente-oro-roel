@@ -5,6 +5,8 @@ import httpx, os, json, re
 from datetime import datetime
 
 app = FastAPI()
+@app.get("/test")
+async def test(): return {"status": "ok", "routes": [r.path for r in app.routes]}
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
