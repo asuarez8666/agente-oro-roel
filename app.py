@@ -100,7 +100,7 @@ def generar_aprendizaje(messages):
         client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
         prompt = f"Analiza esta conversacion y extrae maximo 2 aprendizajes utiles sobre el mercado del oro. Conversacion: {json.dumps(messages[-4:], ensure_ascii=False)}\nResponde SOLO con JSON: {{\"aprendizajes\": [\"aprendizaje 1\"]}}"
         resp = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model="claude-haiku-4-5",
             max_tokens=200,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -289,7 +289,7 @@ if user_input:
             api_messages = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
 
             resp = client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-5",
                 max_tokens=1000,
                 system=system,
                 tools=[{"type": "web_search_20250305", "name": "web_search"}],
