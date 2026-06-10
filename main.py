@@ -1,30 +1,46 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-import httpx, os, json
+import httpx, os, json, re
 from datetime import datetime
-from supabase import create_client
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-SUPABASE_URL  = os.environ.get("SUPABASE_URL", "")
+SUPABASE_URL  = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY  = os.environ.get("SUPABASE_KEY", "")
 
-def get_db():
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+SUPA_HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json",
+    "Prefer": "return=minimal"
+}
 
-# ── Contexto base (Nivel 1) ────────────────────────────────────────────────────
+# ── Supabase helpers (httpx directo, sin librería) ─────────────────────────────
+async def db_insert(table: str, data: dict):
+    async with httpx.AsyncClient(timeout=10) as c:
+        await c.post(f"{SUPABASE_URL}/rest/v1/{table}", headers=SUPA_HEADERS, json=data)
+
+async def db_select(table: str, order: str, limit: int) -> list:
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.get(
+            f"{SUPABASE_URL}/rest/v1/{table}",
+            headers={**SUPA_HEADERS, "Accept": "application/json"},
+            params={"order": f"{order}.desc", "limit": limit}
+        )
+        return r.json() if r.status_code == 200 else []
+
+# ── Contexto base Nivel 1 ─────────────────────────────────────────────────────
 BASE_CONTEXT = """
 CONTEXTO FIJO DE ROEL JOYAS:
 - Empresa de joyería mayorista con operaciones en Colombia, México y Chile.
 - El dueño/gerente usa este agente para tomar decisiones de compra y venta de oro.
 - Compras típicas: menos de $10,000 USD por operación.
-- Unidad de trabajo: gramos (no onzas ni kilos).
-- Monedas relevantes: USD (principal) y COP (Colombia).
-- Decisiones clave: cuándo comprar, a qué precio comprar, cuándo vender o liquidar.
-- El agente NO inventa precios — siempre busca el precio spot real en la web antes de responder.
+- Unidad de trabajo: GRAMOS (nunca onzas ni kilos al reportar).
+- Monedas: USD (principal) y COP (Colombia).
+- Decisiones clave: cuándo comprar, a qué precio, cuándo vender o liquidar.
 - Precio por gramo = precio onza troy / 31.1035.
 """
 
@@ -34,90 +50,36 @@ SYSTEM_TEMPLATE = """Eres el agente de mercado de oro de Roel Joyas. Apoyas al d
 
 {memoria_dinamica}
 
-INSTRUCCIONES DE RESPUESTA:
-1. Busca en la web el precio spot actual (XAU/USD) y tipo de cambio USD/COP antes de responder sobre precios.
+INSTRUCCIONES:
+1. Busca en la web el precio spot actual XAU/USD y tipo de cambio USD/COP antes de responder sobre precios.
 2. Reporta siempre en USD/gramo y COP/gramo.
 3. Da señal clara: COMPRAR, ESPERAR o VENDER.
-4. Si el usuario menciona que tomó una decisión importante (compró X gramos, vendió, esperó), extrae esa información y al FINAL de tu respuesta agrega una línea especial así:
-   [DECISION: accion=COMPRA|VENTA|ESPERA, cantidad_gramos=X, precio_usd_gramo=Y, notas=texto breve]
-   Solo si hay una decisión real. No la inventes.
-5. Máximo 220 palabras. Español siempre.
-6. Sé directo y práctico — hablas con el dueño del negocio, no con un analista."""
+4. Si el usuario menciona una decisión real (compró X gramos, vendió, esperó), agrega al final:
+   [DECISION: accion=COMPRA|VENTA|ESPERA, cantidad_gramos=X, precio_usd_gramo=Y, notas=texto]
+   Solo si hay decisión real. No la inventes.
+5. Máximo 220 palabras. Siempre en español."""
 
-# ── Cargar memoria dinámica (Nivel 2) ─────────────────────────────────────────
-def cargar_memoria(db) -> str:
+# ── Memoria dinámica Nivel 2 ───────────────────────────────────────────────────
+async def cargar_memoria() -> str:
     try:
-        # Últimos aprendizajes
-        aprendizajes = db.table("aprendizajes").select("*").order("created_at", desc=True).limit(10).execute()
-        # Últimas decisiones
-        decisiones = db.table("decisiones").select("*").order("created_at", desc=True).limit(5).execute()
-
+        aprendizajes = await db_select("aprendizajes", "created_at", 8)
+        decisiones   = await db_select("decisiones", "created_at", 5)
         memoria = ""
-        if aprendizajes.data:
-            memoria += "\nAPRENDIZAJES PREVIOS DEL MERCADO Y DEL USUARIO:\n"
-            for a in aprendizajes.data:
-                fecha = a["created_at"][:10]
-                memoria += f"- [{fecha}] {a['contenido']}\n"
-
-        if decisiones.data:
-            memoria += "\nDECISIONES RECIENTES DEL USUARIO:\n"
-            for d in decisiones.data:
-                fecha = d["created_at"][:10]
-                accion = d.get("accion", "")
-                gramos = d.get("cantidad_gramos", "")
-                precio = d.get("precio_usd_gramo", "")
-                notas = d.get("notas", "")
-                memoria += f"- [{fecha}] {accion} {gramos}g a ${precio}/g — {notas}\n"
-
-        return memoria if memoria else "\n(Sin historial previo aún — primera sesión.)\n"
+        if aprendizajes:
+            memoria += "\nAPRENDIZAJES PREVIOS:\n"
+            for a in aprendizajes:
+                fecha = str(a.get("created_at",""))[:10]
+                memoria += f"- [{fecha}] {a.get('contenido','')}\n"
+        if decisiones:
+            memoria += "\nDECISIONES RECIENTES:\n"
+            for d in decisiones:
+                fecha = str(d.get("created_at",""))[:10]
+                memoria += f"- [{fecha}] {d.get('accion','')} {d.get('cantidad_gramos','')}g a ${d.get('precio_usd_gramo','')}/g — {d.get('notas','')}\n"
+        return memoria if memoria else "\n(Primera sesión — sin historial previo.)\n"
     except:
-        return "\n(Memoria no disponible en este momento.)\n"
+        return "\n(Memoria no disponible.)\n"
 
-# ── Guardar aprendizaje después de sesión ─────────────────────────────────────
-async def generar_aprendizaje(messages: list, db):
-    """Llama a Claude para que extraiga qué aprendió de la conversación."""
-    try:
-        resumen_prompt = f"""Analiza esta conversación sobre el mercado del oro y extrae máximo 3 aprendizajes concretos y útiles para futuras consultas. 
-
-Pueden ser sobre: el estado del mercado en ese momento, patrones observados, preocupaciones del usuario, contexto relevante.
-
-Conversación:
-{json.dumps(messages[-6:], ensure_ascii=False)}
-
-Responde SOLO con un JSON así, sin texto adicional:
-{{"aprendizajes": ["aprendizaje 1", "aprendizaje 2", "aprendizaje 3"]}}"""
-
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "Content-Type": "application/json",
-                    "x-api-key": ANTHROPIC_KEY,
-                    "anthropic-version": "2023-06-01",
-                },
-                json={
-                    "model": "claude-haiku-4-5-20251001",
-                    "max_tokens": 300,
-                    "messages": [{"role": "user", "content": resumen_prompt}]
-                }
-            )
-        data = resp.json()
-        text = ""
-        for b in data.get("content", []):
-            if b.get("type") == "text":
-                text += b["text"]
-        match = __import__("re").search(r'\{[\s\S]*\}', text)
-        if match:
-            parsed = json.loads(match.group())
-            for ap in parsed.get("aprendizajes", []):
-                if ap.strip():
-                    db.table("aprendizajes").insert({"contenido": ap.strip()}).execute()
-    except Exception as e:
-        print(f"Error generando aprendizaje: {e}")
-
-# ── Guardar decisión si el agente la detectó ──────────────────────────────────
-def guardar_decision(respuesta: str, db):
-    import re
+async def guardar_decision(respuesta: str):
     match = re.search(r'\[DECISION:(.*?)\]', respuesta)
     if not match:
         return
@@ -128,25 +90,45 @@ def guardar_decision(respuesta: str, db):
             if "=" in item:
                 k, v = item.split("=", 1)
                 partes[k.strip()] = v.strip()
-        db.table("decisiones").insert({
+        await db_insert("decisiones", {
             "accion": partes.get("accion", ""),
             "cantidad_gramos": float(partes.get("cantidad_gramos", 0) or 0),
             "precio_usd_gramo": float(partes.get("precio_usd_gramo", 0) or 0),
             "notas": partes.get("notas", ""),
-        }).execute()
+        })
     except Exception as e:
         print(f"Error guardando decisión: {e}")
 
-# ── Guardar mensaje en historial ───────────────────────────────────────────────
-def guardar_mensaje(role: str, content: str, session_id: str, db):
+async def generar_aprendizaje(messages: list):
     try:
-        db.table("mensajes").insert({
-            "session_id": session_id,
-            "role": role,
-            "content": content[:2000],
-        }).execute()
-    except:
-        pass
+        prompt = f"""Analiza esta conversación sobre el mercado del oro y extrae máximo 3 aprendizajes concretos útiles para el futuro.
+
+Conversación: {json.dumps(messages[-6:], ensure_ascii=False)}
+
+Responde SOLO con JSON sin texto adicional ni backticks:
+{{"aprendizajes": ["aprendizaje 1", "aprendizaje 2"]}}"""
+
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-key": ANTHROPIC_KEY,
+                    "anthropic-version": "2023-06-01",
+                },
+                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 300,
+                      "messages": [{"role": "user", "content": prompt}]}
+            )
+        data = r.json()
+        text = "".join(b["text"] for b in data.get("content", []) if b.get("type") == "text")
+        m = re.search(r'\{[\s\S]*\}', text)
+        if m:
+            parsed = json.loads(m.group())
+            for ap in parsed.get("aprendizajes", []):
+                if ap.strip():
+                    await db_insert("aprendizajes", {"contenido": ap.strip()})
+    except Exception as e:
+        print(f"Error generando aprendizaje: {e}")
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
@@ -157,24 +139,22 @@ async def index():
 @app.post("/api")
 async def proxy(request: Request):
     body = await request.json()
-    db = get_db()
-
-    session_id = body.get("session_id", "default")
     messages   = body.get("messages", [])
+    session_id = body.get("session_id", "default")
 
-    # Guardar mensaje del usuario
-    if messages:
-        last = messages[-1]
-        if last.get("role") == "user":
-            guardar_mensaje("user", last["content"], session_id, db)
+    # Guardar mensaje usuario
+    if messages and messages[-1].get("role") == "user":
+        await db_insert("mensajes", {
+            "session_id": session_id,
+            "role": "user",
+            "content": messages[-1]["content"][:2000]
+        })
 
-    # Construir system prompt con memoria
-    memoria = cargar_memoria(db)
-    system  = SYSTEM_TEMPLATE.format(base_context=BASE_CONTEXT, memoria_dinamica=memoria)
+    memoria  = await cargar_memoria()
+    system   = SYSTEM_TEMPLATE.format(base_context=BASE_CONTEXT, memoria_dinamica=memoria)
 
-    # Llamar a Anthropic
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(
+    async with httpx.AsyncClient(timeout=60) as c:
+        resp = await c.post(
             "https://api.anthropic.com/v1/messages",
             headers={
                 "Content-Type": "application/json",
@@ -192,30 +172,23 @@ async def proxy(request: Request):
         )
     data = resp.json()
 
-    # Extraer respuesta texto
-    reply = ""
-    for b in data.get("content", []):
-        if b.get("type") == "text":
-            reply += b["text"]
-
-    # Guardar respuesta del agente
+    # Extraer reply y guardar
+    reply = "".join(b["text"] for b in data.get("content", []) if b.get("type") == "text")
     if reply:
-        guardar_mensaje("assistant", reply, session_id, db)
-        guardar_decision(reply, db)
+        await db_insert("mensajes", {"session_id": session_id, "role": "assistant", "content": reply[:2000]})
+        await guardar_decision(reply)
 
-    # Generar aprendizaje si la conversación tiene 4+ turnos
+    # Aprendizaje cada 4 turnos
     if len(messages) >= 4 and len(messages) % 4 == 0:
-        await generar_aprendizaje(messages, db)
+        await generar_aprendizaje(messages)
 
     return JSONResponse(content=data, status_code=resp.status_code)
 
 @app.get("/memoria")
 async def ver_memoria():
-    """Endpoint para ver qué ha aprendido el agente."""
-    db = get_db()
     try:
-        aprendizajes = db.table("aprendizajes").select("*").order("created_at", desc=True).limit(20).execute()
-        decisiones   = db.table("decisiones").select("*").order("created_at", desc=True).limit(20).execute()
-        return {"aprendizajes": aprendizajes.data, "decisiones": decisiones.data}
+        aprendizajes = await db_select("aprendizajes", "created_at", 20)
+        decisiones   = await db_select("decisiones", "created_at", 20)
+        return {"aprendizajes": aprendizajes, "decisiones": decisiones}
     except Exception as e:
         return {"error": str(e)}
