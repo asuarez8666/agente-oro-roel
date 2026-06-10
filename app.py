@@ -13,6 +13,36 @@ st.set_page_config(
     layout="centered"
 )
 
+# ── Autenticación ─────────────────────────────────────────────────────────────
+APP_PASSWORD = st.secrets.get("APP_PASSWORD", "Roel2026")
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Sora:wght@400;500&display=swap');
+    [data-testid="stAppViewContainer"]{background:#0F0E0B;}
+    [data-testid="stHeader"]{background:transparent;}
+    .block-container{padding-top:4rem !important; max-width:400px !important;}
+    .login-logo{width:60px;height:60px;border-radius:50%;background:linear-gradient(135deg,#2563EB,#1D4ED8);display:flex;align-items:center;justify-content:center;font-family:'DM Serif Display',serif;font-size:24px;color:#fff;margin:0 auto 16px;}
+    .login-title{font-family:'DM Serif Display',serif;font-size:26px;color:#F5EDD8;text-align:center;font-weight:400;}
+    .login-sub{font-size:12px;color:#6B5E42;text-align:center;font-family:'DM Mono',monospace;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:24px;}
+    </style>
+    """, unsafe_allow_html=True)
+    st.markdown('<div class="login-logo">Au</div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-title">Agente de Oro</div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-sub">Roel Joyas · Acceso restringido</div>', unsafe_allow_html=True)
+    pwd = st.text_input("Contraseña", type="password", placeholder="Ingresa la contraseña...")
+    if st.button("Entrar", use_container_width=True):
+        if pwd == APP_PASSWORD:
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("Contraseña incorrecta")
+    st.stop()
+
 ANTHROPIC_KEY = st.secrets.get("ANTHROPIC_API_KEY", os.environ.get("ANTHROPIC_API_KEY", ""))
 SUPABASE_URL  = st.secrets.get("SUPABASE_URL",  os.environ.get("SUPABASE_URL", "")).rstrip("/")
 SUPABASE_KEY  = st.secrets.get("SUPABASE_KEY",  os.environ.get("SUPABASE_KEY", ""))
@@ -286,11 +316,12 @@ if user_input:
             system  = SYSTEM_PROMPT + ("\n\nCONTEXTO PREVIO:" + memoria if memoria else "")
             client  = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
-            api_messages = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
+            # Limitar historial a ultimos 6 mensajes para ahorrar tokens
+            api_messages = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages[-6:]]
 
             resp = client.messages.create(
                 model="claude-sonnet-4-5",
-                max_tokens=1000,
+                max_tokens=600,
                 system=system,
                 tools=[{"type": "web_search_20250305", "name": "web_search"}],
                 extra_headers={"anthropic-beta": "web-search-2025-03-05"},
