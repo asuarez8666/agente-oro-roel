@@ -13,8 +13,18 @@ st.set_page_config(
     layout="centered"
 )
 
+# Ocultar barra Streamlit siempre
+st.markdown("""<style>
+#MainMenu{visibility:hidden}
+footer{visibility:hidden}
+header{visibility:hidden}
+[data-testid="stToolbar"]{display:none}
+[data-testid="stDecoration"]{display:none}
+[data-testid="stHeader"]{display:none}
+</style>""", unsafe_allow_html=True)
+
 # ── Autenticación ─────────────────────────────────────────────────────────────
-APP_PASSWORD = st.secrets.get("APP_PASSWORD", "Roel2026")
+APP_PASSWORD = st.secrets.get("APP_PASSWORD", "roel2026")
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
