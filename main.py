@@ -163,7 +163,7 @@ async def ver_memoria():
 @app.get("/ping")
 async def ping():
     return {"status": "ok"}
-    @app.post("/ping")
+@app.post("/ping")
 async def ping_post():
     return {"status": "post_ok"}
 
