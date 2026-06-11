@@ -24,7 +24,7 @@ header{visibility:hidden}
 </style>""", unsafe_allow_html=True)
 
 # ── Autenticación ─────────────────────────────────────────────────────────────
-APP_PASSWORD = st.secrets.get("APP_PASSWORD", "Roel2026")
+APP_PASSWORD = st.secrets["APP_PASSWORD"]
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
